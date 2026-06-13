@@ -1,0 +1,16 @@
+{
+  "name": "snooker-online-web-game",
+  "version": "1.0.0",
+  "description": "A dependency-light online billiards and snooker web game with canvas physics and room-code multiplayer.",
+  "private": false,
+  "type": "module",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/AndyXeCM/snooker-online-web-game.git"
+  },
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node server.js"
+  },
+  "keywords": ["snooker", "billiards", "canvas-game", "websocket", "multiplayer"]
+}

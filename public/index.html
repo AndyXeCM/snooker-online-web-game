@@ -1,0 +1,120 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Break Room 台球</title>
+    <link rel="stylesheet" href="/styles.css" />
+    <script src="/vendor/lucide.min.js" defer></script>
+  </head>
+  <body>
+    <main class="app-shell">
+      <section class="play-area" aria-label="台球桌">
+        <div class="topbar">
+          <div class="brand-lockup">
+            <span class="brand-mark" aria-hidden="true"><i data-lucide="circle-dot"></i></span>
+            <div>
+              <p class="eyebrow">BREAK ROOM</p>
+              <h1>Snooker</h1>
+            </div>
+          </div>
+          <div class="score-strip" id="scoreStrip"></div>
+        </div>
+
+        <div class="table-frame">
+          <canvas id="tableCanvas" width="1000" height="520" tabindex="0" aria-label="台球游戏画布"></canvas>
+        </div>
+
+        <div class="status-line">
+          <span class="status-pill"><i data-lucide="activity"></i><span id="statusText">准备开球</span></span>
+          <span class="status-pill muted"><i data-lucide="crosshair"></i><span id="targetText">开放球台</span></span>
+          <span class="status-pill muted"><i data-lucide="wifi"></i><span id="roomBadge">本地</span></span>
+        </div>
+      </section>
+
+      <aside class="control-panel" aria-label="游戏控制">
+        <header class="panel-top">
+          <div>
+            <p class="eyebrow">CONTROL</p>
+            <strong>球桌控制</strong>
+          </div>
+          <span class="panel-dot" aria-hidden="true"></span>
+        </header>
+
+        <section class="panel-section">
+          <p class="section-label"><i data-lucide="layout-grid"></i><span>模式</span></p>
+          <div class="mode-grid" id="modeButtons">
+            <button type="button" class="mode-button active" data-mode="eight" title="8 球">
+              <i data-lucide="circle-dot"></i><span>8</span>
+            </button>
+            <button type="button" class="mode-button" data-mode="nine" title="9 球">
+              <i data-lucide="circle"></i><span>9</span>
+            </button>
+            <button type="button" class="mode-button" data-mode="snooker" title="斯诺克">
+              <i data-lucide="trophy"></i><span>Snooker</span>
+            </button>
+            <button type="button" class="mode-button" data-mode="practice" title="练习">
+              <i data-lucide="target"></i><span>练习</span>
+            </button>
+          </div>
+        </section>
+
+        <section class="panel-section">
+          <p class="section-label"><i data-lucide="gauge"></i><span>出杆</span></p>
+          <div class="meter-row">
+            <i data-lucide="zap" aria-hidden="true"></i>
+            <div class="power-meter"><i id="powerFill"></i></div>
+            <output id="powerValue">55%</output>
+          </div>
+          <div class="shot-buttons">
+            <button type="button" id="shootButton" title="出杆">
+              <i data-lucide="send"></i><span>出杆</span>
+            </button>
+            <button type="button" id="resetButton" title="重摆">
+              <i data-lucide="rotate-ccw"></i><span>重摆</span>
+            </button>
+          </div>
+        </section>
+
+        <section class="panel-section">
+          <p class="section-label"><i data-lucide="radio"></i><span>联机</span></p>
+          <label class="field icon-field" title="昵称">
+            <i data-lucide="user"></i>
+            <input id="playerName" maxlength="16" autocomplete="off" placeholder="Player" />
+          </label>
+          <div class="room-row">
+            <label class="field icon-field" title="房间码">
+              <i data-lucide="hash"></i>
+              <input id="roomCodeInput" maxlength="5" autocomplete="off" placeholder="CODE" />
+            </label>
+            <button type="button" id="joinRoomButton" title="加入房间">
+              <i data-lucide="log-in"></i><span>加入</span>
+            </button>
+          </div>
+          <div class="shot-buttons">
+            <button type="button" id="createRoomButton" title="创建房间">
+              <i data-lucide="plus"></i><span>创建</span>
+            </button>
+            <button type="button" id="leaveRoomButton" title="离开房间">
+              <i data-lucide="log-out"></i><span>离开</span>
+            </button>
+          </div>
+          <div class="room-info" id="roomInfo">未连接房间</div>
+        </section>
+
+        <section class="panel-section">
+          <p class="section-label"><i data-lucide="users"></i><span>球局</span></p>
+          <div class="players-list" id="playersList"></div>
+          <ol class="shot-log" id="shotLog"></ol>
+        </section>
+      </aside>
+    </main>
+
+    <script>
+      window.addEventListener("DOMContentLoaded", () => {
+        window.lucide?.createIcons();
+      });
+    </script>
+    <script src="/js/app.js"></script>
+  </body>
+</html>
