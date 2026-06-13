@@ -12,6 +12,7 @@ Live example: http://snooker.aoodyconcor.de
 - Keyboard, mouse, and touch aiming.
 - Room-code online play with native WebSocket synchronization.
 - Host-authoritative physics for multiplayer rooms.
+- Client-side interpolation/extrapolation smooths multiplayer ball motion between server snapshots.
 - Compact icon-led game HUD using a local Lucide bundle.
 - Built-in health endpoint at `/health`.
 - Test hooks for automation: `window.render_game_to_text()` and `window.advanceTime(ms)`.

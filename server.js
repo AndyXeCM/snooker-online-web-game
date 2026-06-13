@@ -106,6 +106,7 @@ function encodeFrame(text) {
 
 function send(client, type, payload = {}, requestId = null) {
   if (!client.socket.writable) return;
+  if (type === "game:snapshot" && client.socket.writableLength > 256 * 1024) return;
   client.socket.write(encodeFrame(JSON.stringify({ type, payload, requestId })));
 }
 
@@ -303,6 +304,8 @@ server.on("upgrade", (req, socket) => {
       "",
     ].join("\r\n"),
   );
+  socket.setNoDelay(true);
+  socket.setKeepAlive(true, 30000);
 
   const client = {
     id: makeId(),

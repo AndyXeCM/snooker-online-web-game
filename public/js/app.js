@@ -59,6 +59,17 @@
     guideLength: 460,
   };
 
+  const NET = {
+    movingSnapshotMs: 34,
+    idleSnapshotMs: 160,
+    remoteLeadMs: 42,
+    remoteLeadMaxMs: 115,
+    remoteFollowRate: 24,
+    remoteStoppedFollowRate: 18,
+    remoteSnapDistance: 140,
+    tinyRenderDistance: 0.06,
+  };
+
   const MODES = {
     eight: { label: "8 球", players: 2 },
     nine: { label: "9 球", players: 2 },
@@ -118,6 +129,9 @@
       roomCode: null,
       isHost: false,
       lastSnapshotAt: 0,
+      lastRemoteSnapshotAt: 0,
+      remoteSnapshotCount: 0,
+      snapshotSequence: 0,
       waitingForHost: false,
     },
   };
@@ -153,6 +167,29 @@
   function setVelocity(body, velocity) {
     body.velocity.x = velocity.x;
     body.velocity.y = velocity.y;
+  }
+
+  function ensureRenderState(ball) {
+    if (!ball.render) {
+      ball.render = {
+        x: ball.body.position.x,
+        y: ball.body.position.y,
+        pocketed: ball.pocketed,
+      };
+    }
+    return ball.render;
+  }
+
+  function syncRenderToBody(ball) {
+    const renderState = ensureRenderState(ball);
+    renderState.x = ball.body.position.x;
+    renderState.y = ball.body.position.y;
+    renderState.pocketed = ball.pocketed;
+  }
+
+  function displayPosition(ball) {
+    const renderState = ensureRenderState(ball);
+    return renderState.pocketed ? ball.body.position : renderState;
   }
 
   function setAngularVelocity(body, value) {
@@ -270,6 +307,7 @@
       stripe,
       pocketed: false,
       body: makeBody(x, y),
+      render: { x, y, pocketed: false },
     };
     state.balls.push(ball);
     return ball;
@@ -282,6 +320,7 @@
       setAngularVelocity(ball.body, 0);
       setPosition(ball.body, { x: -120, y: -120 });
     }
+    syncRenderToBody(ball);
   }
 
   function findOpenCueSpot() {
@@ -309,6 +348,7 @@
     setPosition(cue.body, spot);
     setVelocity(cue.body, { x: 0, y: 0 });
     setAngularVelocity(cue.body, 0);
+    syncRenderToBody(cue);
   }
 
   function rackTriangle(apexX, centerY, rows, ballDefs) {
@@ -481,6 +521,7 @@
       state.shotLog = [`${modeLabel(mode)} 已重摆`];
       state.message = `${modeLabel(mode)} 准备开球`;
     }
+    state.balls.forEach(syncRenderToBody);
     updateHud();
     broadcastSnapshot(true);
   }
@@ -988,13 +1029,17 @@
 
   function step(dt) {
     handleKeyboardAim(dt);
-    if (!shouldSimulate()) return;
+    if (!shouldSimulate()) {
+      smoothRemoteRender(dt);
+      return;
+    }
 
     const capped = Math.min(dt, 0.05);
     const substeps = Math.max(1, Math.ceil(capped / (1 / 240)));
     for (let i = 0; i < substeps; i += 1) {
       simulatePhysics(capped / substeps);
     }
+    state.balls.forEach(syncRenderToBody);
 
     if (state.shotInProgress && allStopped()) {
       resolveShot();
@@ -1041,6 +1086,8 @@
   function serializeSnapshot() {
     return {
       version: 1,
+      sequence: state.online.snapshotSequence,
+      sentAt: performance.now(),
       mode: state.mode,
       turnIndex: state.turnIndex,
       players: state.players.map((player) => ({
@@ -1071,11 +1118,13 @@
 
   function applySnapshot(snapshot) {
     if (!snapshot || snapshot.version !== 1) return;
-    if (
+    const tableReset =
       snapshot.mode !== state.mode ||
       snapshot.balls.length !== state.balls.length ||
-      snapshot.balls.some((ball) => !getBall(ball.id))
-    ) {
+      snapshot.balls.some((ball) => !getBall(ball.id));
+    const firstSnapshot = state.online.remoteSnapshotCount === 0 || tableReset;
+
+    if (tableReset) {
       rackMode(snapshot.mode, {
         keepPlayers: true,
         keepScores: true,
@@ -1092,11 +1141,19 @@
     state.winnerId = snapshot.winnerId || null;
     state.message = snapshot.message || state.message;
     state.shotLog = snapshot.log || state.shotLog;
-    state.aim.angle = snapshot.aim?.angle ?? state.aim.angle;
-    state.aim.power = snapshot.aim?.power ?? state.aim.power;
 
     if (Array.isArray(snapshot.players) && snapshot.players.length) {
       state.players = snapshot.players.map((player) => ({ ...player }));
+    }
+
+    const localTurn =
+      state.online.active &&
+      !state.online.isHost &&
+      currentPlayer()?.id === state.online.socketId &&
+      !snapshot.shotInProgress;
+    if (!localTurn) {
+      state.aim.angle = snapshot.aim?.angle ?? state.aim.angle;
+      state.aim.power = snapshot.aim?.power ?? state.aim.power;
     }
 
     snapshot.balls.forEach((remote) => {
@@ -1105,11 +1162,20 @@
       if (remote.pocketed) {
         setPocketed(ball, true);
       } else {
+        const renderState = ensureRenderState(ball);
+        const wasPocketed = ball.pocketed;
         ball.pocketed = false;
         setPosition(ball.body, { x: remote.x, y: remote.y });
         setVelocity(ball.body, { x: remote.vx, y: remote.vy });
+        renderState.pocketed = false;
+        const renderDistance = Math.hypot(renderState.x - remote.x, renderState.y - remote.y);
+        if (firstSnapshot || wasPocketed || renderDistance > NET.remoteSnapDistance) {
+          syncRenderToBody(ball);
+        }
       }
     });
+    state.online.lastRemoteSnapshotAt = performance.now();
+    state.online.remoteSnapshotCount += 1;
     state.online.waitingForHost = false;
     updateHud();
   }
@@ -1118,9 +1184,60 @@
     const online = state.online;
     if (!online.active || !online.isHost || !online.socket?.connected) return;
     const now = performance.now();
-    if (!force && now - online.lastSnapshotAt < 80) return;
+    const moving = state.shotInProgress || !allStopped();
+    const minInterval = moving ? NET.movingSnapshotMs : NET.idleSnapshotMs;
+    if (!force && now - online.lastSnapshotAt < minInterval) return;
+    online.snapshotSequence += 1;
     online.socket.emit("game:snapshot", { snapshot: serializeSnapshot() });
     online.lastSnapshotAt = now;
+  }
+
+  function smoothRemoteRender(dt) {
+    const now = performance.now();
+    const ageMs = state.online.lastRemoteSnapshotAt
+      ? now - state.online.lastRemoteSnapshotAt
+      : 0;
+    const leadSeconds = clamp(
+      (ageMs + NET.remoteLeadMs) / 1000,
+      0,
+      NET.remoteLeadMaxMs / 1000,
+    );
+
+    for (const ball of state.balls) {
+      const renderState = ensureRenderState(ball);
+      if (ball.pocketed) {
+        syncRenderToBody(ball);
+        continue;
+      }
+
+      if (renderState.pocketed) {
+        syncRenderToBody(ball);
+        continue;
+      }
+
+      const velocity = ball.body.velocity;
+      const targetX = ball.body.position.x + velocity.x * leadSeconds;
+      const targetY = ball.body.position.y + velocity.y * leadSeconds;
+      const distanceToTarget = Math.hypot(targetX - renderState.x, targetY - renderState.y);
+      if (distanceToTarget > NET.remoteSnapDistance || state.online.waitingForHost) {
+        renderState.x = targetX;
+        renderState.y = targetY;
+        renderState.pocketed = false;
+        continue;
+      }
+
+      const moving = Math.hypot(velocity.x, velocity.y) > FEEL.stopSpeed;
+      const rate = moving ? NET.remoteFollowRate : NET.remoteStoppedFollowRate;
+      const alpha = 1 - Math.exp(-rate * dt);
+      renderState.x += (targetX - renderState.x) * alpha;
+      renderState.y += (targetY - renderState.y) * alpha;
+      renderState.pocketed = false;
+
+      if (Math.hypot(targetX - renderState.x, targetY - renderState.y) < NET.tinyRenderDistance) {
+        renderState.x = targetX;
+        renderState.y = targetY;
+      }
+    }
   }
 
   function createRoomSocket() {
@@ -1167,6 +1284,10 @@
       state.online.active = false;
       state.online.isHost = false;
       state.online.roomCode = null;
+      state.online.lastSnapshotAt = 0;
+      state.online.lastRemoteSnapshotAt = 0;
+      state.online.remoteSnapshotCount = 0;
+      state.online.snapshotSequence = 0;
       state.online.waitingForHost = false;
       state.message = "联机已断开";
       updateHud();
@@ -1193,9 +1314,16 @@
   function applyRoom(room) {
     if (!room) return;
     const online = state.online;
+    const joiningNewRoom = online.roomCode !== room.code;
     online.active = true;
     online.roomCode = room.code;
     online.isHost = room.hostId === online.socketId;
+    if (joiningNewRoom) {
+      online.lastSnapshotAt = 0;
+      online.lastRemoteSnapshotAt = 0;
+      online.remoteSnapshotCount = 0;
+      online.snapshotSequence = 0;
+    }
 
     const previous = new Map(state.players.map((player) => [player.id, player]));
     state.players = room.players.map((player) => ({
@@ -1298,6 +1426,10 @@
     state.online.active = false;
     state.online.isHost = false;
     state.online.roomCode = null;
+    state.online.lastSnapshotAt = 0;
+    state.online.lastRemoteSnapshotAt = 0;
+    state.online.remoteSnapshotCount = 0;
+    state.online.snapshotSequence = 0;
     state.online.waitingForHost = false;
     rackMode(state.mode);
   }
@@ -1536,7 +1668,7 @@
 
     for (const ball of visibleBalls()) {
       if (ball.id === "cue") continue;
-      const target = ball.body.position;
+      const target = displayPosition(ball);
       const ox = origin.x - target.x;
       const oy = origin.y - target.y;
       const b = 2 * (dx * ox + dy * oy);
@@ -1560,7 +1692,7 @@
   function drawAim() {
     const cue = cueBall();
     if (!cue || cue.pocketed || !canControlCurrentPlayer()) return;
-    const pos = cue.body.position;
+    const pos = displayPosition(cue);
     const dx = Math.cos(state.aim.angle);
     const dy = Math.sin(state.aim.angle);
     const power = state.aim.power;
@@ -1577,7 +1709,7 @@
     ctx.setLineDash([]);
 
     if (guide.type === "ball" && guide.ball) {
-      const target = guide.ball.body.position;
+      const target = displayPosition(guide.ball);
       const outDx = target.x - guide.x;
       const outDy = target.y - guide.y;
       const outLength = Math.hypot(outDx, outDy) || 1;
@@ -1618,7 +1750,7 @@
 
   function drawBall(ball) {
     if (ball.pocketed) return;
-    const { x, y } = ball.body.position;
+    const { x, y } = displayPosition(ball);
     const r = TABLE.ballR;
 
     ctx.save();
@@ -1697,6 +1829,10 @@
         active: state.online.active,
         roomCode: state.online.roomCode,
         isHost: state.online.isHost,
+        remoteSnapshotCount: state.online.remoteSnapshotCount,
+        remoteSnapshotAgeMs: state.online.lastRemoteSnapshotAt
+          ? Math.round(performance.now() - state.online.lastRemoteSnapshotAt)
+          : null,
       },
       turn: {
         index: state.turnIndex,
@@ -1723,8 +1859,8 @@
           id: ball.id,
           number: ball.number,
           kind: ball.kind,
-          x: Math.round(ball.body.position.x),
-          y: Math.round(ball.body.position.y),
+          x: Math.round(displayPosition(ball).x),
+          y: Math.round(displayPosition(ball).y),
           vx: Number(ball.body.velocity.x.toFixed(2)),
           vy: Number(ball.body.velocity.y.toFixed(2)),
         })),
